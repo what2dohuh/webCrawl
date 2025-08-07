@@ -1,0 +1,188 @@
+package main
+
+import (
+	"sync"
+	"fmt"
+	"net/http"
+	"net/url"
+	"io"
+	"golang.org/x/net/html"
+	"strings"
+)
+
+type Queue struct {
+	elements []string
+	mu       sync.Mutex
+}
+
+
+func (q *Queue) Enqueue(url string) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.elements = append(q.elements, url)
+}
+
+
+func (q *Queue) Dequeue() (string, error) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	if len(q.elements) == 0 {
+		return "", fmt.Errorf("queue is empty")
+	}
+
+	url := q.elements[0]
+	q.elements = q.elements[1:] // This re-slicing is a simple way to dequeue
+	return url, nil
+}
+
+// Size returns the current number of elements in the queue.
+func (q *Queue) Size() int {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return len(q.elements)
+}
+
+type Fetecher interface{
+	Fetch(url string) (body string,urls []string,err error)
+}
+
+type RealFetcher struct{}
+
+func (r RealFetcher) Fetch(url string) (string,[]string,error){
+	res , err := http.Get(url)
+	if err != nil{
+		return "" , nil ,err
+		} 
+	defer res.Body.Close()
+	// BodyParser,errBody := io.ReadAll(res.Body)
+
+	// fmt.Printf("body::",string(BodyParser))
+	// if errBody!=nil {
+	// 	return "",nil,errBody
+	// } 
+	// bodyString := string(BodyParser)
+
+	links,errLinks := extractLink(res.Body,url)
+	if errLinks!= nil{
+		return "",nil,errLinks
+	}
+	// fmt.Print(links)
+	return "",links,nil
+}
+
+func extractLink(body io.Reader, baseURL string) ([]string, error) {
+	var links []string
+	doc, err := html.Parse(body)
+	if err != nil {
+		return nil, err
+	}
+
+	base, _ := url.Parse(baseURL)
+
+	var visit func(*html.Node)
+	visit = func(n *html.Node) {
+		if n.Type == html.ElementNode && n.Data == "a" {
+			for _, attr := range n.Attr {
+				if attr.Key == "href" {
+					href := attr.Val
+					u, err := url.Parse(href)
+					if err != nil {
+						continue
+					}
+					resolved := base.ResolveReference(u) 
+					links = append(links, resolved.String())
+				}
+			}
+		}
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			visit(c)
+		}
+	}
+	visit(doc)
+
+	return links, nil
+}
+
+
+type VisitedUrls struct{
+	mu sync.Mutex
+	Visited map[string]bool 
+}
+
+func (V *VisitedUrls) Visit(rawUrl string) bool{
+	url := NormalizeUrl(rawUrl)
+	V.mu.Lock()
+	defer V.mu.Unlock()
+	if V.Visited[url]{
+		return false
+	}
+	V.Visited[url] = true
+	return true
+}
+
+func SerialCrawler(seedUrl string,fetcher Fetecher,visited *VisitedUrls,q *Queue){
+	q.Enqueue(seedUrl)
+	PageCrawled:=0
+	for q.Size() > 0{
+		if PageCrawled >= 400 {
+			break
+		}
+	
+		url,err:=q.Dequeue()
+		if err!= nil {
+			break
+		}
+		if !visited.Visit(url){
+			// fmt.Printf("Already Visited: %s/n",url)
+			continue
+		}
+		_,urls,err:=fetcher.Fetch(url)
+		if err!=nil{
+			continue
+		}
+		// fmt.Printf("Error:%v",err)
+		for _,u := range urls{
+		if strings.HasPrefix(u, "http") { // filter only HTTP/S URLs
+		q.Enqueue(u)
+		}
+	}
+		fmt.Printf(" %d: %s\n",PageCrawled, url)
+		PageCrawled++
+	}
+}
+func NormalizeUrl(rawURL string) string{
+	u, err := url.Parse(rawURL)
+	if err!=nil{
+		return rawURL
+	}
+	u.Fragment =  ""
+	u.RawQuery = ""
+	return u.String()
+}
+	// main function to tie it all together
+func main() {
+	// 1. Initialize our components
+	q := &Queue{
+		elements: make([]string, 0),
+	}
+	visited := &VisitedUrls{
+		Visited: make(map[string]bool),
+	}
+	fetcher := RealFetcher{}
+
+
+	// 2. Start the crawl
+	startUrl := "https://pkg.go.dev/net/http"
+	fmt.Printf("--- Starting Serial Crawl from %s ---\n", startUrl)
+	SerialCrawler(startUrl, fetcher, visited,q)	
+	fmt.Println("--- Serial Crawl Finished ---")
+
+	// for i:=0;i<10;i++ {
+	// 	resp , _ := http.Get("https://pkg.go.dev/net/http")
+	// 	defer resp.Body.Close()
+	// 	body,_:=io.ReadAll(resp.Body)
+	// 	bs:=string(body)
+	// 	fmt.Printf("Visited:",bs)
+	// }
+}
