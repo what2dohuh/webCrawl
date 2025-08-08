@@ -8,6 +8,7 @@ import (
 	"io"
 	"golang.org/x/net/html"
 	"strings"
+	"bytes"
 )
 
 type Queue struct {
@@ -55,15 +56,22 @@ func (r RealFetcher) Fetch(url string) (string,[]string,error){
 		return "" , nil ,err
 		} 
 	defer res.Body.Close()
-	// BodyParser,errBody := io.ReadAll(res.Body)
+	BodyParser,_ := io.ReadAll(res.Body)
 
-	// fmt.Printf("body::",string(BodyParser))
+	links,errLinks := extractLink(bytes.NewReader(BodyParser), url)
+
+	// fmt.Printf("body: %s",string(BodyParser))
+	fmt.Print("\n")
+	title, _ := extractTitle(BodyParser)
+    fmt.Println("Title:", title)
+	text, _ := extractText(BodyParser)
+    fmt.Println("Description:", text)
+	fmt.Print("\n")
 	// if errBody!=nil {
 	// 	return "",nil,errBody
 	// } 
 	// bodyString := string(BodyParser)
 
-	links,errLinks := extractLink(res.Body,url)
 	if errLinks!= nil{
 		return "",nil,errLinks
 	}
@@ -103,7 +111,50 @@ func extractLink(body io.Reader, baseURL string) ([]string, error) {
 
 	return links, nil
 }
+func extractTitle(body []byte) (string, error) {
+    doc, err := html.Parse(bytes.NewReader(body))
+    if err != nil {
+        return "", err
+    }
+    var title string
+    var f func(*html.Node)
+    f = func(n *html.Node) {
+        if n.Type == html.ElementNode && n.Data == "title" && n.FirstChild != nil {
+            title = n.FirstChild.Data
+            return
+        }
+        for c := n.FirstChild; c != nil; c = c.NextSibling {
+            f(c)
+        }
+    }
+    f(doc)
+    return title, nil
+}
 
+func extractText(body []byte) (string, error) {
+    doc, err := html.Parse(bytes.NewReader(body))
+    if err != nil {
+        return "", err
+    }
+
+    var buf strings.Builder
+    var f func(*html.Node)
+    f = func(n *html.Node) {
+        if n.Type == html.TextNode {
+            // Add text with trimming to avoid excess spaces
+            text := strings.TrimSpace(n.Data)
+            if text != "" {
+                buf.WriteString(text + " ")
+            }
+        }
+        for c := n.FirstChild; c != nil; c = c.NextSibling {
+            f(c)
+        }
+    }
+    f(doc)
+
+    return strings.TrimSpace(buf.String()), nil
+}
 
 type VisitedUrls struct{
 	mu sync.Mutex
@@ -134,16 +185,14 @@ func SerialCrawler(seedUrl string,fetcher Fetecher,visited *VisitedUrls,q *Queue
 			break
 		}
 		if !visited.Visit(url){
-			// fmt.Printf("Already Visited: %s/n",url)
 			continue
 		}
 		_,urls,err:=fetcher.Fetch(url)
 		if err!=nil{
 			continue
 		}
-		// fmt.Printf("Error:%v",err)
 		for _,u := range urls{
-		if strings.HasPrefix(u, "http") { // filter only HTTP/S URLs
+		if strings.HasPrefix(u, "http") { 
 		q.Enqueue(u)
 		}
 	}
@@ -160,9 +209,7 @@ func NormalizeUrl(rawURL string) string{
 	u.RawQuery = ""
 	return u.String()
 }
-	// main function to tie it all together
 func main() {
-	// 1. Initialize our components
 	q := &Queue{
 		elements: make([]string, 0),
 	}
@@ -173,7 +220,7 @@ func main() {
 
 
 	// 2. Start the crawl
-	startUrl := "https://pkg.go.dev/net/http"
+	startUrl := "https://crawler-test.com/"
 	fmt.Printf("--- Starting Serial Crawl from %s ---\n", startUrl)
 	SerialCrawler(startUrl, fetcher, visited,q)	
 	fmt.Println("--- Serial Crawl Finished ---")
