@@ -62,11 +62,13 @@ func (r RealFetcher) Fetch(url string) (string,[]string,error){
 
 	// fmt.Printf("body: %s",string(BodyParser))
 	fmt.Print("\n")
+
 	title, _ := extractTitle(BodyParser)
     fmt.Println("Title:", title)
 	text, _ := extractText(BodyParser)
     fmt.Println("Description:", text)
 	fmt.Print("\n")
+
 	// if errBody!=nil {
 	// 	return "",nil,errBody
 	// } 
@@ -140,6 +142,18 @@ func extractText(body []byte) (string, error) {
     var buf strings.Builder
     var f func(*html.Node)
     f = func(n *html.Node) {
+		if n.Type == html.CommentNode {
+			return
+		}
+
+		if n.Type == html.ElementNode && (n.Data == "script" || n.Data == "style") {
+			return
+		}
+		if len(body)>5 && string(body[:5])== "%PDF-" {
+        fmt.Println("PDF detected from file signature")
+        	return 
+    }
+
         if n.Type == html.TextNode {
             // Add text with trimming to avoid excess spaces
             text := strings.TrimSpace(n.Data)
@@ -220,7 +234,7 @@ func main() {
 
 
 	// 2. Start the crawl
-	startUrl := "https://crawler-test.com/"
+	startUrl := "https://nerist.ac.in/"
 	fmt.Printf("--- Starting Serial Crawl from %s ---\n", startUrl)
 	SerialCrawler(startUrl, fetcher, visited,q)	
 	fmt.Println("--- Serial Crawl Finished ---")
