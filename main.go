@@ -53,12 +53,19 @@ func (q *Queue) Size() int {
 }
 
 type Fetecher interface{
-	Fetch(url string) (body string,urls []string,err error)
+	Fetch(url string,collection *mongo.Collection) (body string,urls []string,err error)
 }
 
 type RealFetcher struct{}
 
-func (r RealFetcher) Fetch(url string) (string,[]string,error){
+type Page struct {
+    URL   string   `bson:"url"`
+    Links []string `bson:"links"`
+    Text  string   `bson:"text,omitempty"`
+    Title  string   `bson:"title,omitempty"`
+}
+
+func (r RealFetcher) Fetch(url string,collection *mongo.Collection) (string,[]string,error){
 	res , err := http.Get(url)
 	if err != nil{
 		return "" , nil ,err
@@ -76,7 +83,17 @@ func (r RealFetcher) Fetch(url string) (string,[]string,error){
 	text, _ := extractText(BodyParser)
     fmt.Println("Description:", text)
 	fmt.Print("\n")
-
+	page := Page{
+		URL:url,
+		Links:links,
+		Text:text,
+		Title:title,
+	} 
+	_,errColl:=collection.InsertOne(context.TODO(),page)
+	
+    if errColl!=nil{
+		log.Fatal("Not Inserted:",errColl)
+	} 
 	// if errBody!=nil {
 	// 	return "",nil,errBody
 	// } 
@@ -194,7 +211,7 @@ func (V *VisitedUrls) Visit(rawUrl string) bool{
 	return true
 }
 
-func SerialCrawler(seedUrl string,fetcher Fetecher,visited *VisitedUrls,q *Queue){
+func SerialCrawler(seedUrl string,fetcher Fetecher,visited *VisitedUrls,q *Queue,collection *mongo.Collection){
 	q.Enqueue(seedUrl)
 	PageCrawled:=0
 	for q.Size() > 0{
@@ -209,7 +226,7 @@ func SerialCrawler(seedUrl string,fetcher Fetecher,visited *VisitedUrls,q *Queue
 		if !visited.Visit(url){
 			continue
 		}
-		_,urls,err:=fetcher.Fetch(url)
+		_,urls,err:=fetcher.Fetch(url,collection)
 		if err!=nil{
 			continue
 		}
@@ -234,7 +251,7 @@ func NormalizeUrl(rawURL string) string{
 
 
 
-func connectMongo(){
+func connectMongo() *mongo.Collection{
 	var uri string
 	err := godotenv.Load()
 	if err!=nil{
@@ -250,20 +267,18 @@ func connectMongo(){
 	if err != nil {
 		panic(err)
 	}
-	defer func() {
-		if err = client.Disconnect(context.TODO()); err != nil {
-			panic(err)
-		}
-	}()
+
 	var result bson.M
 	if err := client.Database("admin").RunCommand(context.TODO(), bson.D{{"ping", 1}}).Decode(&result); err != nil {
 		panic(err)
 	}
 	fmt.Println("Pinged your deployment. You successfully connected to MongoDB!")
 
+    db := client.Database("crawled")
+	collection := db.Collection("pages")
+	return collection
 }
 func main() {
-	connectMongo()
 	q := &Queue{
 		elements: make([]string, 0),
 	}
@@ -271,12 +286,13 @@ func main() {
 		Visited: make(map[string]bool),
 	}
 	fetcher := RealFetcher{}
-
+	
+	collection:= connectMongo()
 
 	// 2. Start the crawl
 	startUrl := "https://nerist.ac.in/"
 	fmt.Printf("--- Starting Serial Crawl from %s ---\n", startUrl)
-	SerialCrawler(startUrl, fetcher, visited,q)	
+	SerialCrawler(startUrl, fetcher, visited,q,collection)	
 	fmt.Println("--- Serial Crawl Finished ---")
 
 	// for i:=0;i<10;i++ {
