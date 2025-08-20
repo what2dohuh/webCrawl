@@ -16,6 +16,7 @@ import (
 	"log"
 	"context"
 	"github.com/joho/godotenv"
+	"encoding/json"
 )
 
 
@@ -278,6 +279,24 @@ func connectMongo() *mongo.Collection{
 	collection := db.Collection("pages")
 	return collection
 }
+func find(collection *mongo.Collection){
+	filter:= bson.D{{"title","Chemistry"}}
+	cursor,err:= collection.Find(context.TODO(),filter)
+	if err!=nil{
+		log.Fatal("Error While searching")
+	}
+	var results[]Page;
+	if err = cursor.All(context.TODO(),&results);err!=nil{
+		panic(err)
+	}
+	for _,result := range results{
+		doc,err := json.MarshalIndent(result,""," ")
+		if err != nil {
+			panic(err)
+		}
+		fmt.Printf("%s\n", doc)
+	}
+}
 func main() {
 	q := &Queue{
 		elements: make([]string, 0),
@@ -289,17 +308,13 @@ func main() {
 	
 	collection:= connectMongo()
 
-	// 2. Start the crawl
+	//Searching................./
+	// fmt.Print("Searching...")
+	// find(collection)
+
 	startUrl := "https://nerist.ac.in/"
 	fmt.Printf("--- Starting Serial Crawl from %s ---\n", startUrl)
 	SerialCrawler(startUrl, fetcher, visited,q,collection)	
 	fmt.Println("--- Serial Crawl Finished ---")
 
-	// for i:=0;i<10;i++ {
-	// 	resp , _ := http.Get("https://pkg.go.dev/net/http")
-	// 	defer resp.Body.Close()
-	// 	body,_:=io.ReadAll(resp.Body)
-	// 	bs:=string(body)
-	// 	fmt.Printf("Visited:",bs)
-	// }
 }
